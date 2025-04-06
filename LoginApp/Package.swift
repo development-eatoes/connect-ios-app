@@ -4,12 +4,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "LoginApp",
+    name: "Connect",
     platforms: [
-        .macOS(.v12)
+        .macOS(.v12),
+        .iOS(.v15)
     ],
     products: [
-        .executable(name: "LoginApp", targets: ["LoginApp"]),
+        .executable(name: "Connect", targets: ["LoginApp"]),
         .library(name: "HTTPServer", targets: ["HTTPServer"])
     ],
     dependencies: [
