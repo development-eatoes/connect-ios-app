@@ -1,0 +1,9 @@
+platform :ios, '15.0'
+use_frameworks!
+
+target 'ConnectApp' do
+  # Pods for ConnectApp
+  pod 'DigitalMenu', :path => '../Pods/DigitalMenu'
+  pod 'NetworkLayer', :path => '../Pods/NetworkLayer'
+  pod 'UIComponents', :path => '../Pods/UIComponents'
+end
