@@ -2,142 +2,179 @@ import Foundation
 import Combine
 
 class OTPViewModel: ObservableObject {
-    // Input
-    @Published var otp: String = ""
-    @Published var phoneNumber: String = ""
-    @Published var sessionId: String = ""
+    // Input fields
+    @Published var otp = ""
+    @Published var phoneNumber = ""
+    @Published var sessionId = ""
     
-    // Output
-    @Published var isLoading: Bool = false
-    @Published var showError: Bool = false
-    @Published var errorMessage: String = ""
-    @Published var otpError: String? = nil
-    @Published var isVerified: Bool = false
-    @Published var resendInProgress: Bool = false
-    @Published var resendSuccess: Bool = false
+    // UI state
+    @Published var isLoading = false
+    @Published var showError = false
+    @Published var errorMessage = ""
+    @Published var canResend = false
+    @Published var resendInProgress = false
+    @Published var resendSuccess = false
+    @Published var resendCountdown = 60
     
-    // Timer for resend button
-    @Published var resendCountdown: Int = 30
-    @Published var canResend: Bool = false
-    
-    // User data after successful authentication
-    @Published var user: User? = nil
-    @Published var authToken: String? = nil
-    
-    // Event publisher for successful verification
-    private let verificationSuccessSubject = PassthroughSubject<User, Never>()
-    var onVerificationSuccess: AnyPublisher<User, Never> {
-        return verificationSuccessSubject.eraseToAnyPublisher()
-    }
-    
+    // Dependencies
     private let verifyOTPUseCase: VerifyOTPUseCase
     private let resendOTPUseCase: ResendOTPUseCase
     private var cancellables = Set<AnyCancellable>()
-    private var timer: AnyCancellable?
+    private var timer: Timer?
+    
+    // State
+    private var authenticated = false
     
     init(verifyOTPUseCase: VerifyOTPUseCase, resendOTPUseCase: ResendOTPUseCase) {
         self.verifyOTPUseCase = verifyOTPUseCase
         self.resendOTPUseCase = resendOTPUseCase
+        
         startResendTimer()
     }
     
+    // Verify OTP
     func verifyOTP() {
-        guard validateOTP() else { return }
+        guard otp.count == 6, !sessionId.isEmpty, !phoneNumber.isEmpty else {
+            showError = true
+            errorMessage = "Please enter a valid OTP code"
+            return
+        }
         
         isLoading = true
-        showError = false
         
-        verifyOTPUseCase.execute(phoneNumber: phoneNumber, sessionId: sessionId, otp: otp)
-            .receive(on: DispatchQueue.main)
-            .sink(
-                receiveCompletion: { [weak self] completion in
-                    guard let self = self else { return }
-                    self.isLoading = false
-                    
-                    if case .failure(let error) = completion {
-                        self.showError = true
-                        self.errorMessage = error.localizedDescription
-                    }
-                },
-                receiveValue: { [weak self] response in
-                    guard let self = self else { return }
-                    self.authToken = response.token
-                    self.user = response.user
-                    self.isVerified = true
-                    self.verificationSuccessSubject.send(response.user)
+        verifyOTPUseCase.execute(
+            sessionId: sessionId,
+            phoneNumber: phoneNumber,
+            otp: otp
+        )
+        .receive(on: DispatchQueue.main)
+        .sink(
+            receiveCompletion: { [weak self] completion in
+                self?.isLoading = false
+                
+                if case .failure(let error) = completion {
+                    self?.showError = true
+                    self?.errorMessage = error.localizedDescription
                 }
-            )
-            .store(in: &cancellables)
+            },
+            receiveValue: { [weak self] response in
+                // Store tokens (in real app this would use a token manager/keychain)
+                // For demo purposes, we just set a flag
+                self?.authenticated = true
+                
+                // In a real app, we'd navigate to the main app here
+                // But that will be handled by AppCoordinator
+            }
+        )
+        .store(in: &cancellables)
     }
     
+    // Resend OTP
     func resendOTP() {
-        guard canResend else { return }
+        guard !sessionId.isEmpty, !phoneNumber.isEmpty, canResend, !resendInProgress else {
+            return
+        }
         
         resendInProgress = true
         resendSuccess = false
-        showError = false
         
-        resendOTPUseCase.execute(sessionId: sessionId)
+        resendOTPUseCase.execute(sessionId: sessionId, phoneNumber: phoneNumber)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
-                    guard let self = self else { return }
-                    self.resendInProgress = false
+                    self?.resendInProgress = false
                     
                     if case .failure(let error) = completion {
-                        self.showError = true
-                        self.errorMessage = error.localizedDescription
+                        self?.showError = true
+                        self?.errorMessage = error.localizedDescription
+                    } else {
+                        // Reset resend timer
+                        self?.startResendTimer()
                     }
                 },
-                receiveValue: { [weak self] _ in
-                    guard let self = self else { return }
-                    self.resendSuccess = true
-                    self.resetResendTimer()
+                receiveValue: { [weak self] response in
+                    // Update session ID if new one was provided
+                    if let newSessionId = response.sessionId {
+                        self?.sessionId = newSessionId
+                    }
                     
-                    // Hide success message after a delay
+                    // Show success
+                    self?.resendSuccess = true
+                    
+                    // Auto-hide success message after a delay
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                        self.resendSuccess = false
+                        self?.resendSuccess = false
                     }
                 }
             )
             .store(in: &cancellables)
     }
     
-    private func validateOTP() -> Bool {
-        // Simple validation for demonstration purposes
-        if otp.count != 6 || !CharacterSet.decimalDigits.isSuperset(of: CharacterSet(charactersIn: otp)) {
-            otpError = "Please enter a valid 6-digit OTP"
-            return false
-        }
-        
-        otpError = nil
-        return true
-    }
-    
+    // Timer for resend OTP cooldown
     private func startResendTimer() {
         canResend = false
-        resendCountdown = 30
+        resendCountdown = 60
         
-        timer = Timer.publish(every: 1, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self = self else { return }
-                
-                if self.resendCountdown > 0 {
-                    self.resendCountdown -= 1
-                } else {
-                    self.canResend = true
-                    self.timer?.cancel()
-                }
+        // Invalidate existing timer if any
+        timer?.invalidate()
+        
+        // Create a new timer
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            
+            if self.resendCountdown > 0 {
+                self.resendCountdown -= 1
+            } else {
+                self.canResend = true
+                self.timer?.invalidate()
             }
+        }
     }
     
-    private func resetResendTimer() {
-        timer?.cancel()
+    // Reset view model state
+    func resetState() {
+        otp = ""
+        phoneNumber = ""
+        sessionId = ""
+        isLoading = false
+        showError = false
+        errorMessage = ""
+        canResend = false
+        resendInProgress = false
+        resendSuccess = false
+        authenticated = false
+        
+        timer?.invalidate()
         startResendTimer()
     }
     
     deinit {
-        timer?.cancel()
+        timer?.invalidate()
     }
 }
+
+#if DEBUG
+class VerifyOTPUseCase {
+    private let authRepository: AuthRepository
+    
+    init(authRepository: AuthRepository) {
+        self.authRepository = authRepository
+    }
+    
+    func execute(sessionId: String, phoneNumber: String, otp: String) -> AnyPublisher<TokenResponse, Error> {
+        return authRepository.verifyOTP(sessionId: sessionId, phoneNumber: phoneNumber, otp: otp)
+    }
+}
+
+class ResendOTPUseCase {
+    private let authRepository: AuthRepository
+    
+    init(authRepository: AuthRepository) {
+        self.authRepository = authRepository
+    }
+    
+    func execute(sessionId: String, phoneNumber: String) -> AnyPublisher<ResendOTPResponse, Error> {
+        return authRepository.resendOTP(sessionId: sessionId, phoneNumber: phoneNumber)
+    }
+}
+#endif

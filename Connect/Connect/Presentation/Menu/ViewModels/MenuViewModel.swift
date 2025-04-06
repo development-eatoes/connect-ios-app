@@ -2,28 +2,25 @@ import Foundation
 import Combine
 
 class MenuViewModel: ObservableObject {
-    // Categories
+    // Categories data
     @Published var categories: [MenuCategory] = []
-    @Published var isLoadingCategories: Bool = false
+    @Published var selectedCategoryId: String?
     
-    // Menu items for a selected category
-    @Published var selectedCategoryId: String? = nil
+    // Menu items data
     @Published var menuItems: [MenuItem] = []
-    @Published var isLoadingMenuItems: Bool = false
+    @Published var selectedItemDetail: MenuItemDetail?
     
-    // Item details
-    @Published var selectedItemId: String? = nil
-    @Published var selectedItemDetail: MenuItemDetail? = nil
-    @Published var isLoadingItemDetail: Bool = false
+    // UI state
+    @Published var isLoadingCategories = false
+    @Published var isLoadingMenuItems = false
+    @Published var isLoadingItemDetail = false
+    @Published var showError = false
+    @Published var errorMessage = ""
     
-    // Error handling
-    @Published var showError: Bool = false
-    @Published var errorMessage: String = ""
-    
+    // Dependencies
     private let fetchCategoriesUseCase: FetchCategoriesUseCase
     private let fetchMenuItemsUseCase: FetchMenuItemsUseCase
     private let fetchMenuItemDetailUseCase: FetchMenuItemDetailUseCase
-    
     private var cancellables = Set<AnyCancellable>()
     
     init(
@@ -36,107 +33,134 @@ class MenuViewModel: ObservableObject {
         self.fetchMenuItemDetailUseCase = fetchMenuItemDetailUseCase
     }
     
+    // Load menu categories
     func loadCategories() {
         isLoadingCategories = true
-        showError = false
         
         fetchCategoriesUseCase.execute()
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
-                    guard let self = self else { return }
-                    self.isLoadingCategories = false
+                    self?.isLoadingCategories = false
                     
                     if case .failure(let error) = completion {
-                        self.showError = true
-                        self.errorMessage = error.localizedDescription
+                        self?.showError = true
+                        self?.errorMessage = error.localizedDescription
                     }
                 },
                 receiveValue: { [weak self] categories in
-                    guard let self = self else { return }
-                    self.categories = categories
+                    self?.categories = categories
                     
-                    // If no category is selected and we have categories, select the first one
-                    if self.selectedCategoryId == nil, let firstCategory = categories.first {
-                        self.selectCategory(categoryId: firstCategory.id)
+                    // Select the first category by default if available
+                    if let firstCategoryId = categories.first?.id {
+                        self?.selectCategory(categoryId: firstCategoryId)
                     }
                 }
             )
             .store(in: &cancellables)
     }
     
+    // Select a category and load its menu items
     func selectCategory(categoryId: String) {
-        guard selectedCategoryId != categoryId else { return }
+        guard categoryId != selectedCategoryId else { return }
         
         selectedCategoryId = categoryId
-        loadMenuItems(categoryId: categoryId)
+        loadMenuItems(for: categoryId)
     }
     
-    func loadMenuItems(categoryId: String) {
+    // Load menu items for the selected category
+    private func loadMenuItems(for categoryId: String) {
         isLoadingMenuItems = true
-        showError = false
+        menuItems = []
         
         fetchMenuItemsUseCase.execute(categoryId: categoryId)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
-                    guard let self = self else { return }
-                    self.isLoadingMenuItems = false
+                    self?.isLoadingMenuItems = false
                     
                     if case .failure(let error) = completion {
-                        self.showError = true
-                        self.errorMessage = error.localizedDescription
+                        self?.showError = true
+                        self?.errorMessage = error.localizedDescription
                     }
                 },
                 receiveValue: { [weak self] items in
-                    guard let self = self else { return }
-                    self.menuItems = items
+                    self?.menuItems = items
                 }
             )
             .store(in: &cancellables)
     }
     
+    // Select an item and load its details
     func selectItem(itemId: String) {
-        guard selectedItemId != itemId else { return }
-        
-        selectedItemId = itemId
-        loadItemDetail(itemId: itemId)
-    }
-    
-    func loadItemDetail(itemId: String) {
         isLoadingItemDetail = true
-        showError = false
-        selectedItemDetail = nil
         
         fetchMenuItemDetailUseCase.execute(itemId: itemId)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
-                    guard let self = self else { return }
-                    self.isLoadingItemDetail = false
+                    self?.isLoadingItemDetail = false
                     
                     if case .failure(let error) = completion {
-                        self.showError = true
-                        self.errorMessage = error.localizedDescription
+                        self?.showError = true
+                        self?.errorMessage = error.localizedDescription
                     }
                 },
                 receiveValue: { [weak self] itemDetail in
-                    guard let self = self else { return }
-                    self.selectedItemDetail = itemDetail
+                    self?.selectedItemDetail = itemDetail
                 }
             )
             .store(in: &cancellables)
     }
     
-    func refreshData() {
-        loadCategories()
-        
-        if let categoryId = selectedCategoryId {
-            loadMenuItems(categoryId: categoryId)
-        }
-        
-        if let itemId = selectedItemId {
-            loadItemDetail(itemId: itemId)
-        }
+    // Reset view model state
+    func resetState() {
+        categories = []
+        selectedCategoryId = nil
+        menuItems = []
+        selectedItemDetail = nil
+        isLoadingCategories = false
+        isLoadingMenuItems = false
+        isLoadingItemDetail = false
+        showError = false
+        errorMessage = ""
     }
 }
+
+#if DEBUG
+class FetchCategoriesUseCase {
+    private let menuRepository: MenuRepository
+    
+    init(menuRepository: MenuRepository) {
+        self.menuRepository = menuRepository
+    }
+    
+    func execute() -> AnyPublisher<[MenuCategory], Error> {
+        return menuRepository.fetchCategories()
+    }
+}
+
+class FetchMenuItemsUseCase {
+    private let menuRepository: MenuRepository
+    
+    init(menuRepository: MenuRepository) {
+        self.menuRepository = menuRepository
+    }
+    
+    func execute(categoryId: String) -> AnyPublisher<[MenuItem], Error> {
+        return menuRepository.fetchMenuItems(categoryId: categoryId)
+    }
+}
+
+class FetchMenuItemDetailUseCase {
+    private let menuRepository: MenuRepository
+    
+    init(menuRepository: MenuRepository) {
+        self.menuRepository = menuRepository
+    }
+    
+    func execute(itemId: String) -> AnyPublisher<MenuItemDetail, Error> {
+        return menuRepository.fetchMenuItemDetail(itemId: itemId)
+    }
+}
+#endif

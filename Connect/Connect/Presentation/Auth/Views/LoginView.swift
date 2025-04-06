@@ -1,130 +1,145 @@
 import SwiftUI
 
 struct LoginView: View {
-    @StateObject var viewModel: LoginViewModel
-    @State private var showOTPVerification = false
+    @ObservedObject var viewModel: LoginViewModel
+    @State private var otpViewModel = DIContainer.shared.makeOTPViewModel()
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                VStack(spacing: 24) {
-                    // Logo
-                    Image(systemName: "link.circle.fill")
-                        .resizable()
-                        .frame(width: 80, height: 80)
+        ZStack {
+            VStack(spacing: 20) {
+                // Logo and welcome message
+                VStack(spacing: 8) {
+                    Image(systemName: "bolt.fill")
+                        .font(.system(size: 60))
                         .foregroundColor(.blue)
-                        .padding(.bottom, 20)
+                        .padding(.bottom, 16)
                     
-                    // Welcome text
                     Text("Welcome to Connect")
                         .font(.title)
                         .fontWeight(.bold)
                     
-                    Text("Enter your phone number to continue")
+                    Text("Sign in to continue")
                         .font(.subheadline)
                         .foregroundColor(.gray)
-                        .padding(.bottom, 20)
+                }
+                .padding(.top, 50)
+                .padding(.bottom, 30)
+                
+                // Phone Number Section
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Phone Number")
+                        .font(.headline)
+                        .foregroundColor(.primary)
                     
-                    // Phone number input
-                    StyledTextField(
-                        placeholder: "Phone Number",
+                    CustomTextField(
+                        placeholder: "Enter your mobile number",
                         text: $viewModel.phoneNumber,
                         keyboardType: .phonePad,
                         errorMessage: viewModel.phoneNumberError
                     )
-                    
-                    if viewModel.otpSent {
-                        // OTP view in the same screen
-                        VStack(spacing: 12) {
-                            Text("Enter the OTP sent to \(viewModel.phoneNumber)")
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
-                            
-                            // OTP fields
-                            OTPVerificationSection(
-                                viewModel: OTPViewModel(
-                                    verifyOTPUseCase: DIContainer.shared.verifyOTPUseCase,
-                                    resendOTPUseCase: DIContainer.shared.resendOTPUseCase
-                                ).also {
-                                    $0.phoneNumber = viewModel.phoneNumber
-                                    $0.sessionId = viewModel.sessionId
-                                }
-                            )
-                        }
-                        .padding(.vertical, 20)
-                        .transition(.opacity)
-                    } else {
-                        // Login button
-                        PrimaryButton(
-                            title: "Continue",
-                            action: {
-                                viewModel.login()
-                            },
-                            isLoading: viewModel.isLoading,
-                            isDisabled: viewModel.phoneNumber.isEmpty
-                        )
-                    }
-                    
-                    Spacer()
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 60)
+                .padding(.horizontal)
                 
-                // Error alert
-                .alert(isPresented: $viewModel.showError) {
-                    Alert(
-                        title: Text("Error"),
-                        message: Text(viewModel.errorMessage ?? "Something went wrong"),
-                        dismissButton: .default(Text("OK"))
-                    )
+                // OTP Section (Shown after phone number submission)
+                if viewModel.otpSent {
+                    otpSection
+                        .transition(.opacity)
+                        .onAppear {
+                            // Transfer session data to OTP view model
+                            otpViewModel.sessionId = viewModel.sessionId ?? ""
+                            otpViewModel.phoneNumber = viewModel.phoneNumber
+                        }
+                }
+                
+                Spacer()
+                
+                // Login button (changes to verify button after OTP is sent)
+                PrimaryButton(
+                    title: viewModel.otpSent ? "Verify OTP" : "Continue",
+                    isLoading: viewModel.otpSent ? otpViewModel.isLoading : viewModel.isLoading,
+                    isDisabled: viewModel.otpSent ? otpViewModel.otp.count < 6 : viewModel.phoneNumber.count < 10
+                ) {
+                    if viewModel.otpSent {
+                        otpViewModel.verifyOTP()
+                    } else {
+                        viewModel.login()
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 16)
+            }
+            
+            // Error handling for phone number submission
+            if viewModel.showError {
+                ErrorView(message: viewModel.errorMessage) {
+                    viewModel.showError = false
                 }
             }
-            .navigationBarHidden(true)
-        }
-    }
-}
-
-struct OTPVerificationSection: View {
-    @ObservedObject var viewModel: OTPViewModel
-    
-    var body: some View {
-        VStack(spacing: 20) {
-            OTPField(
-                otp: $viewModel.otp,
-                otpLength: 6,
-                errorMessage: viewModel.otpError
-            )
             
-            PrimaryButton(
-                title: "Verify OTP",
-                action: {
-                    viewModel.verifyOTP()
-                },
-                isLoading: viewModel.isLoading,
-                isDisabled: viewModel.otp.count < 6
-            )
-            
-            Button("Resend OTP") {
-                viewModel.resendOTP()
+            // Error handling for OTP verification
+            if otpViewModel.showError {
+                ErrorView(message: otpViewModel.errorMessage) {
+                    otpViewModel.showError = false
+                }
             }
-            .font(.system(size: 14, weight: .medium))
-            .foregroundColor(.blue)
-            .disabled(viewModel.isLoading)
+            
+            // Loading overlay
+            if viewModel.isLoading {
+                LoadingView()
+            }
         }
-        .alert(isPresented: $viewModel.showError) {
-            Alert(
-                title: Text("Error"),
-                message: Text(viewModel.errorMessage ?? "Something went wrong"),
-                dismissButton: .default(Text("OK"))
-            )
+    }
+    
+    // OTP input section
+    private var otpSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Enter OTP")
+                .font(.headline)
+                .foregroundColor(.primary)
+            
+            Text("We've sent a 6-digit verification code to \(viewModel.phoneNumber)")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+                .padding(.bottom, 8)
+            
+            OTPInputView(otpString: $otpViewModel.otp)
+                .padding(.vertical, 10)
+            
+            // Resend button
+            if otpViewModel.canResend {
+                Button(action: {
+                    otpViewModel.resendOTP()
+                }) {
+                    Text("Resend OTP")
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
+                }
+                .disabled(otpViewModel.resendInProgress)
+                .opacity(otpViewModel.resendInProgress ? 0.5 : 1.0)
+            } else {
+                Text("Resend OTP in \(otpViewModel.resendCountdown)s")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+            }
+            
+            // Resend success
+            if otpViewModel.resendSuccess {
+                Text("OTP resent successfully!")
+                    .font(.subheadline)
+                    .foregroundColor(.green)
+                    .padding(.top, 4)
+            }
         }
+        .padding(.horizontal)
+        .padding(.top, 10)
     }
 }
 
-// Extension to make property initialization cleaner
-extension OTPViewModel {
-    func also(configure: (OTPViewModel) -> Void) -> OTPViewModel {
-        configure(self)
-        return self
+#if DEBUG
+struct LoginView_Previews: PreviewProvider {
+    static var previews: some View {
+        let viewModel = LoginViewModel(loginUseCase: LoginUseCase(authRepository: MockAuthRepository()))
+        LoginView(viewModel: viewModel)
     }
 }
+#endif
